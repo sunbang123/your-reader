@@ -10,6 +10,27 @@ create table public.profiles (
   updated_at timestamptz not null default now()
 );
 
+create schema if not exists private;
+
+create function private.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.profiles (id, display_name)
+  values (new.id, coalesce(nullif(new.raw_user_meta_data ->> 'display_name', ''), split_part(new.email, '@', 1), '독자'));
+  return new;
+end;
+$$;
+
+revoke all on function private.handle_new_user() from public, anon, authenticated;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure private.handle_new_user();
+
 create table public.personas (
   id text primary key,
   name text not null,
@@ -98,6 +119,10 @@ create policy "analyses through owned entries" on public.emotion_analyses for se
 create policy "scores through owned entries" on public.emotion_scores for select using (exists (select 1 from public.emotion_analyses a join public.entries e on e.id = a.entry_id where a.id = analysis_id and e.user_id = auth.uid()));
 create policy "comments through owned entries" on public.generated_comments for select using (exists (select 1 from public.entries e where e.id = entry_id and e.user_id = auth.uid()));
 create policy "sound preferences own row" on public.sound_preferences for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+grant usage on schema public to authenticated;
+grant select on public.personas to authenticated;
+grant select, insert, update, delete on public.entries to authenticated;
 
 insert into public.personas (id, name, role, description, system_prompt, prompt_version, default_language) values
   ('listener', '다온', '차분한 경청자', '판단 없이 감정의 결을 짚는 독자', 'See docs/persona-guidelines.md', '1.0', 'ko'),
