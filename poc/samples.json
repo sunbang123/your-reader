@@ -1,0 +1,5 @@
+[
+  {"id":"sadness_and_relief","text":"오늘 회사에서 애써 준비한 발표를 망쳤다. 아무렇지 않은 척했지만 집으로 돌아오는 버스에서 자꾸 눈물이 났다. 그래도 동료가 건넨 따뜻한 말 한마디 덕분에 내일 다시 해볼 수 있을 것 같다.","expected_emotions":["슬픔","안도"],"expected_highlight_contains":"따뜻한"},
+  {"id":"joy_and_gratitude","text":"오랫동안 기다리던 합격 문자를 받았다. 믿기지 않아 몇 번이나 화면을 다시 봤다. 곁에서 기다려 준 가족의 얼굴이 떠올라 마음이 벅차고 고맙다.","expected_emotions":["기쁨","고마움"],"expected_highlight_contains":"벅차고"},
+  {"id":"anxiety_and_loneliness","text":"밤이 깊어질수록 내일 결과가 나쁘면 어쩌나 하는 생각이 커진다. 누구에게 말하면 짐이 될 것 같아서 혼자 휴대폰만 바라보고 있다. 사실은 누군가 괜찮다고 말해 주었으면 좋겠다.","expected_emotions":["불안","외로움"],"expected_highlight_contains":"짐이"}
+]
