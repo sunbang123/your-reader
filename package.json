@@ -6,9 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "poc": "tsx poc/run-prototype.ts",
+    "poc:real": "tsx poc/run-prototype.ts",
+    "poc:test": "tsx --test poc/*.test.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "next": "^15.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -17,6 +21,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "tsx": "^4.20.0",
     "typescript": "^5.7.0"
   }
 }
