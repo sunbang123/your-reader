@@ -1,115 +1,190 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { emotions, personas, type PersonaId } from "../lib/models";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { AuthChangeEvent, Session, User, UserResponse } from "@supabase/supabase-js";
+import { createClient, isSupabaseConfigured } from "../lib/supabase/client";
 
-type View = "persona" | "editor" | "result" | "library";
+type Entry = {
+  id: string;
+  title: string;
+  body: string;
+  updated_at: string;
+};
 
-const sampleText = "오랜만에 아무 약속도 없는 저녁이었다. 창문을 조금 열어두니 비 냄새가 방 안으로 들어왔다. 해야 할 일은 남아 있었지만, 오늘만큼은 가만히 있어도 괜찮다는 생각이 들었다.";
+type SaveState = "idle" | "saving" | "saved" | "error";
 
 export default function Home() {
-  const [view, setView] = useState<View>("persona");
-  const [personaId, setPersonaId] = useState<PersonaId>("listener");
-  const [text, setText] = useState(sampleText);
-  const [soundOn, setSoundOn] = useState(true);
-  const persona = useMemo(() => personas.find((item) => item.id === personaId)!, [personaId]);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entryId, setEntryId] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const lastSaved = useRef({ title: "", body: "" });
+
+  const loadEntries = useCallback(async (owner: User) => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("entries")
+      .select("id,title,body,updated_at")
+      .eq("user_id", owner.id)
+      .order("updated_at", { ascending: false });
+    setEntries((data as Entry[] | null) ?? []);
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setLoading(false);
+      return;
+    }
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }: UserResponse) => {
+      setUser(data.user);
+      if (data.user) void loadEntries(data.user);
+      setLoading(false);
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
+      setUser(session?.user ?? null);
+      if (session?.user) void loadEntries(session.user);
+    });
+    return () => data.subscription.unsubscribe();
+  }, [loadEntries]);
+
+  useEffect(() => {
+    if (!user || (title === lastSaved.current.title && body === lastSaved.current.body)) return;
+    setSaveState("saving");
+    const timer = window.setTimeout(async () => {
+      const supabase = createClient();
+      const values = { title, body, user_id: user.id, persona_id: "listener", status: "draft" };
+      const result = entryId
+        ? await supabase.from("entries").update(values).eq("id", entryId).select("id,title,body,updated_at").single()
+        : await supabase.from("entries").insert(values).select("id,title,body,updated_at").single();
+      if (result.error || !result.data) {
+        setSaveState("error");
+        return;
+      }
+      const saved = result.data as Entry;
+      setEntryId(saved.id);
+      lastSaved.current = { title, body };
+      setSaveState("saved");
+      void loadEntries(user);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [body, entryId, loadEntries, title, user]);
+
+  function openEntry(entry: Entry) {
+    setEntryId(entry.id);
+    setTitle(entry.title);
+    setBody(entry.body);
+    lastSaved.current = { title: entry.title, body: entry.body };
+    setSaveState("saved");
+  }
+
+  function newEntry() {
+    setEntryId(null);
+    setTitle("");
+    setBody("");
+    lastSaved.current = { title: "", body: "" };
+    setSaveState("idle");
+  }
+
+  async function removeEntry(id: string) {
+    if (!window.confirm("이 글을 삭제할까요?")) return;
+    await createClient().from("entries").delete().eq("id", id);
+    if (entryId === id) newEntry();
+    if (user) void loadEntries(user);
+  }
+
+  if (!isSupabaseConfigured) return <Setup />;
+  if (loading) return <main className="center">불러오는 중…</main>;
+  if (!user) return <Auth />;
 
   return (
-    <main>
-      <header className="topbar">
-        <button className="brand" onClick={() => setView("persona")}>YOUR READER</button>
-        <nav aria-label="주요 메뉴">
-          <button className={view === "library" ? "active" : ""} onClick={() => setView("library")}>나의 서재</button>
-          <button className="avatar" aria-label="프로필">윤</button>
-        </nav>
-      </header>
-
-      {view === "persona" && (
-        <section className="page persona-page">
-          <p className="eyebrow">오늘 당신의 글을 읽어줄 사람</p>
-          <h1>어떤 독자에게<br />마음을 건넬까요?</h1>
-          <p className="lede">지금 필요한 방식으로 당신의 문장을 읽어줄 한 사람을 골라보세요.</p>
-          <div className="persona-grid">
-            {personas.map((item) => (
-              <button key={item.id} className={`persona-card ${personaId === item.id ? "selected" : ""}`} onClick={() => setPersonaId(item.id)}>
-                <span className="persona-mark">{item.mark}</span>
-                <span className="persona-role">{item.role}</span>
-                <strong>{item.name}</strong>
-                <span>{item.description}</span>
-                <small>“{item.greeting}”</small>
+    <main className="workspace">
+      <aside className="sidebar">
+        <div className="sidebar-head">
+          <strong>YOUR READER</strong>
+          <button className="icon-button" onClick={newEntry} aria-label="새 글">＋</button>
+        </div>
+        <button className="new-button" onClick={newEntry}>새 글 쓰기</button>
+        <div className="entry-list">
+          {entries.length === 0 && <p className="empty">첫 문장을 기다리고 있어요.</p>}
+          {entries.map((entry) => (
+            <div className={`entry-item ${entry.id === entryId ? "active" : ""}`} key={entry.id}>
+              <button onClick={() => openEntry(entry)}>
+                <strong>{entry.title || "제목 없는 글"}</strong>
+                <span>{new Date(entry.updated_at).toLocaleDateString("ko-KR")}</span>
               </button>
-            ))}
-          </div>
-          <button className="primary" onClick={() => setView("editor")}>{persona.name}에게 글쓰기 <span>→</span></button>
-        </section>
-      )}
-
-      {view === "editor" && (
-        <section className="editor-page">
-          <aside className="reader-note">
-            <span className="persona-mark">{persona.mark}</span>
-            <p className="eyebrow">{persona.role} · {persona.name}</p>
-            <blockquote>“{persona.greeting}”</blockquote>
-            <button className={`sound ${soundOn ? "on" : ""}`} onClick={() => setSoundOn(!soundOn)}>
-              <span className="sound-bars">▮▮▮</span> 빗소리 {soundOn ? "켜짐" : "꺼짐"}
-            </button>
-          </aside>
-          <div className="writing-sheet">
-            <div className="writing-meta"><span>2026년 7월 16일 목요일</span><span>{text.length}자</span></div>
-            <input className="title-input" defaultValue="비가 오던 저녁" aria-label="글 제목" />
-            <textarea value={text} onChange={(event) => setText(event.target.value)} aria-label="글 내용" placeholder="지금 떠오르는 마음을 적어보세요." />
-            <div className="editor-actions">
-              <button className="secondary" onClick={() => setView("persona")}>독자 바꾸기</button>
-              <button className="primary" disabled={!text.trim()} onClick={() => setView("result")}>글을 읽어주세요 <span>→</span></button>
+              <button className="delete" onClick={() => void removeEntry(entry.id)} aria-label="글 삭제">×</button>
             </div>
-          </div>
-        </section>
-      )}
+          ))}
+        </div>
+        <button className="signout" onClick={() => void createClient().auth.signOut()}>로그아웃</button>
+      </aside>
+      <section className="editor">
+        <header className="editor-head">
+          <span>{body.length.toLocaleString()}자</span>
+          <span className={`save-state ${saveState}`}>
+            {saveState === "saving" && "저장 중…"}
+            {saveState === "saved" && "저장됨"}
+            {saveState === "error" && "저장 실패 — 다시 입력해 주세요"}
+            {saveState === "idle" && "글을 쓰면 자동 저장됩니다"}
+          </span>
+        </header>
+        <div className="paper">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="제목" aria-label="글 제목" maxLength={160} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="지금 떠오르는 마음을 천천히 적어보세요…" aria-label="글 내용" maxLength={50000} autoFocus />
+        </div>
+      </section>
+    </main>
+  );
+}
 
-      {view === "result" && (
-        <section className="page result-page">
-          <p className="eyebrow">{persona.name}이 천천히 읽어보았어요</p>
-          <h1>문장 사이에서<br />이런 마음을 만났어요.</h1>
-          <div className="result-grid">
-            <article className="emotion-panel">
-              <h2>마음의 결</h2>
-              <p>고요함 속에서 스스로에게 잠시 쉬어도 된다고 허락하는 마음이 가장 크게 느껴졌어요.</p>
-              <div className="emotion-list">
-                {emotions.map((emotion) => (
-                  <div className="emotion" key={emotion.label}>
-                    <div><span>{emotion.label}</span><strong>{emotion.score}%</strong></div>
-                    <div className="track"><span className={emotion.color} style={{ width: `${emotion.score}%` }} /></div>
-                  </div>
-                ))}
-              </div>
-            </article>
-            <article className="letter">
-              <div className="letter-head"><span className="persona-mark">{persona.mark}</span><div><small>{persona.role}</small><strong>{persona.name}의 답장</strong></div></div>
-              <p>아무 약속도 없는 저녁이 오히려 당신에게 작은 약속을 건넨 것 같아요. 오늘만큼은 가만히 있어도 괜찮다고요.</p>
-              <p>특히 “비 냄새가 방 안으로 들어왔다”는 문장에서 오래 머물렀어요. 바깥의 계절이 조용히 당신의 마음까지 들어와 굳어 있던 긴장을 풀어주는 장면처럼 느껴졌거든요.</p>
-              <p className="signature">당신의 문장을 읽은, {persona.name}</p>
-            </article>
-          </div>
-          <div className="result-actions"><button className="secondary" onClick={() => setView("editor")}>다시 쓰기</button><button className="primary" onClick={() => setView("library")}>서재에 보관하기</button></div>
-        </section>
-      )}
+function Auth() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [message, setMessage] = useState("");
 
-      {view === "library" && (
-        <section className="page library-page">
-          <div className="library-heading"><div><p className="eyebrow">나만의 문장 보관함</p><h1>나의 서재</h1><p className="lede">쓰고, 읽히고, 조금씩 알아간 마음이 모이는 곳이에요.</p></div><button className="primary" onClick={() => setView("persona")}>새 글 쓰기</button></div>
-          <div className="summary-card"><div><span>이번 달 기록</span><strong>7편</strong></div><div><span>가장 자주 만난 마음</span><strong>안도</strong></div><div><span>함께한 독자</span><strong>3명</strong></div></div>
-          <div className="entry-grid">
-            {["비가 오던 저녁", "조금 느린 월요일", "낯선 도시의 창문"].map((title, index) => (
-              <article className="entry-card" key={title}>
-                <div className="entry-meta"><span>7월 {16 - index * 3}일</span><span>{index === 1 ? "그리움" : "안도"}</span></div>
-                <h2>{title}</h2>
-                <p>{index === 0 ? sampleText : "천천히 적어 내려간 문장 속에서 그날의 마음을 다시 만났습니다."}</p>
-                <div className="entry-reader"><span className="persona-mark">{personas[index].mark}</span><span>{personas[index].name}이 읽음</span><button onClick={() => setView("result")}>열어보기 →</button></div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setMessage("");
+    const supabase = createClient();
+    const result = mode === "login"
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({ email, password });
+    if (result.error) setMessage(result.error.message);
+    else if (mode === "signup" && !result.data.session) setMessage("이메일의 확인 링크를 눌러 가입을 완료해 주세요.");
+  }
+
+  return (
+    <main className="auth-page">
+      <form className="auth-card" onSubmit={submit}>
+        <p className="brand-label">YOUR READER</p>
+        <h1>{mode === "login" ? "다시 만나요" : "당신의 서재를 만들어요"}</h1>
+        <p>생각이 사라지기 전에, 조용히 문장으로 남겨보세요.</p>
+        <label>이메일<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+        <label>비밀번호<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} required /></label>
+        {message && <p className="form-message">{message}</p>}
+        <button className="primary" type="submit">{mode === "login" ? "로그인" : "회원가입"}</button>
+        <button className="text-button" type="button" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
+          {mode === "login" ? "처음이신가요? 회원가입" : "이미 계정이 있나요? 로그인"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function Setup() {
+  return (
+    <main className="auth-page">
+      <section className="auth-card setup-card">
+        <p className="brand-label">YOUR READER</p>
+        <h1>Supabase 연결이 필요해요</h1>
+        <p><code>.env.local</code>에 아래 두 값을 추가하면 인증과 자동 저장이 활성화됩니다.</p>
+        <pre>NEXT_PUBLIC_SUPABASE_URL=...{"\n"}NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...</pre>
+      </section>
     </main>
   );
 }
