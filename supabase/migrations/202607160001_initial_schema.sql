@@ -58,6 +58,21 @@ create table public.entries (
   check (char_length(body) <= 50000)
 );
 
+create function private.set_updated_at()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger entries_set_updated_at
+  before update on public.entries
+  for each row execute procedure private.set_updated_at();
+
 create index entries_user_created_idx on public.entries(user_id, created_at desc);
 
 create table public.emotion_analyses (
@@ -112,13 +127,13 @@ alter table public.generated_comments enable row level security;
 alter table public.sound_preferences enable row level security;
 alter table public.personas enable row level security;
 
-create policy "profiles own row" on public.profiles for all using (auth.uid() = id) with check (auth.uid() = id);
-create policy "personas public read" on public.personas for select using (is_active = true);
-create policy "entries own rows" on public.entries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy "analyses through owned entries" on public.emotion_analyses for select using (exists (select 1 from public.entries e where e.id = entry_id and e.user_id = auth.uid()));
-create policy "scores through owned entries" on public.emotion_scores for select using (exists (select 1 from public.emotion_analyses a join public.entries e on e.id = a.entry_id where a.id = analysis_id and e.user_id = auth.uid()));
-create policy "comments through owned entries" on public.generated_comments for select using (exists (select 1 from public.entries e where e.id = entry_id and e.user_id = auth.uid()));
-create policy "sound preferences own row" on public.sound_preferences for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "profiles own row" on public.profiles for all to authenticated using ((select auth.uid()) = id) with check ((select auth.uid()) = id);
+create policy "personas public read" on public.personas for select to authenticated using (is_active = true);
+create policy "entries own rows" on public.entries for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+create policy "analyses through owned entries" on public.emotion_analyses for select to authenticated using (exists (select 1 from public.entries e where e.id = entry_id and e.user_id = (select auth.uid())));
+create policy "scores through owned entries" on public.emotion_scores for select to authenticated using (exists (select 1 from public.emotion_analyses a join public.entries e on e.id = a.entry_id where a.id = analysis_id and e.user_id = (select auth.uid())));
+create policy "comments through owned entries" on public.generated_comments for select to authenticated using (exists (select 1 from public.entries e where e.id = entry_id and e.user_id = (select auth.uid())));
+create policy "sound preferences own row" on public.sound_preferences for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 
 grant usage on schema public to authenticated;
 grant select on public.personas to authenticated;
